@@ -1,4 +1,5 @@
 import asyncio
+import colorama
 import telnetlib3
 import json
 import re
@@ -8,6 +9,15 @@ from colorama import init, Fore, Style
 init(autoreset=True)
 
 CONFIG_FILE = "config.json"
+smallwelcomeart=r"""
+ _   _                           _               
+| \ | |                         | |              
+|  \| | ___  ___  _ __ ___  __ _| |_ __ ___  ___ 
+| . ` |/ _ \/ _ \| '__/ _ \/ _` | | '_ ` _ \/ __|
+| |\  |  __/ (_) | | |  __/ (_| | | | | | | \__ \
+\_| \_/\___|\___/|_|  \___|\__,_|_|_| |_| |_|___/
+"""
+
 
 def color_send(msg):
     return f"{Fore.RED}[nr]{Style.RESET_ALL} {Fore.WHITE}{msg}{Style.RESET_ALL}"
@@ -86,6 +96,8 @@ async def choose_account(config):
                     acc = accounts[int(idx)-1]
                     return acc['username'], acc['password'], int(idx)-1
                 print("Invalid selection.")
+        elif choice == "quit" or choice == "exit":
+            exit(0)
     # Default to main account
     return info['username'], info['password'], None
 
@@ -104,6 +116,7 @@ def has_enemies(text):
     return False
 
 async def main():
+    print(colorama.Fore.RED + f"{smallwelcomeart}{colorama.Style.RESET_ALL}")
     # Load configuration
     with open(CONFIG_FILE) as f:
         config = json.load(f)
@@ -135,7 +148,6 @@ async def main():
     # Attack state
     attack_task = None
     attack_stop_event = asyncio.Event()
-
     print(f"\n{Fore.GREEN}Connected to {host}:{port} as {username}.{Style.RESET_ALL} Type commands or !quit to exit.")
 
     while True:
