@@ -1,5 +1,4 @@
 import asyncio
-import colorama
 import telnetlib3
 import json
 import re
@@ -9,15 +8,6 @@ from colorama import init, Fore, Style
 init(autoreset=True)
 
 CONFIG_FILE = "config.json"
-smallwelcomeart=r"""
- _   _                           _               
-| \ | |                         | |              
-|  \| | ___  ___  _ __ ___  __ _| |_ __ ___  ___ 
-| . ` |/ _ \/ _ \| '__/ _ \/ _` | | '_ ` _ \/ __|
-| |\  |  __/ (_) | | |  __/ (_| | | | | | | \__ \
-\_| \_/\___|\___/|_|  \___|\__,_|_|_| |_| |_|___/
-"""
-
 
 def color_send(msg):
     return f"{Fore.RED}[nr]{Style.RESET_ALL} {Fore.WHITE}{msg}{Style.RESET_ALL}"
@@ -53,6 +43,20 @@ def find_money_drop(text):
         return match.group(1)
     return None
 
+def find_money_ground_drop(text):
+    match = re.search(r'\$([0-9]+) drops to the ground\.', text)
+    if match:
+        return match.group(1)
+    return None
+
+def has_enemies(text):
+    # Looks for "Enemies: ..." with at least one enemy listed
+    m = re.search(r'Enemies:\s*(.+)', text)
+    if m:
+        enemies = m.group(1).strip()
+        return bool(enemies) and enemies.lower() != "none"
+    return False
+
 def normalize_location(name):
     return name.lower().replace(" ", "")
 
@@ -64,13 +68,6 @@ def update_account_location(config, username, location):
             with open(CONFIG_FILE, "w") as f:
                 json.dump(config, f, indent=2)
             break
-
-def find_money_ground_drop(text):
-    # Looks for "$<amount> drops to the ground."
-    match = re.search(r'\$([0-9]+) drops to the ground\.', text)
-    if match:
-        return match.group(1)
-    return None
 
 async def read_stdin(queue):
     loop = asyncio.get_running_loop()
@@ -96,8 +93,6 @@ async def choose_account(config):
                     acc = accounts[int(idx)-1]
                     return acc['username'], acc['password'], int(idx)-1
                 print("Invalid selection.")
-        elif choice == "quit" or choice == "exit":
-            exit(0)
     # Default to main account
     return info['username'], info['password'], None
 
@@ -107,22 +102,13 @@ async def attack_loop(writer, attack_speed, stop_event):
         writer.write("attack\r\n")
         await asyncio.sleep(attack_speed)
 
-def has_enemies(text):
-    # Looks for "Enemies: ..." with at least one enemy listed
-    m = re.search(r'Enemies:\s*(.+)', text)
-    if m:
-        enemies = m.group(1).strip()
-        return bool(enemies) and enemies.lower() != "none"
-    return False
-
 async def main():
-    print(colorama.Fore.RED + f"{smallwelcomeart}{colorama.Style.RESET_ALL}")
     # Load configuration
     with open(CONFIG_FILE) as f:
         config = json.load(f)
     info = config['info']
 
-    # Account selection, login, etc. as before
+    # Account selection
     username, password, acc_index = await choose_account(config)
     aliases = parse_aliases(info.get('aliases', []))
     aaf_dont_take_money = info.get('aaf_dont_take_money', False)
@@ -148,9 +134,11 @@ async def main():
     # Attack state
     attack_task = None
     attack_stop_event = asyncio.Event()
+
     print(f"\n{Fore.GREEN}Connected to {host}:{port} as {username}.{Style.RESET_ALL} Type commands or !quit to exit.")
 
     while True:
+        # Process user input
         try:
             cmd = await asyncio.wait_for(input_queue.get(), timeout=0.1)
             if cmd == "!quit":
@@ -169,11 +157,13 @@ async def main():
         except asyncio.TimeoutError:
             pass
 
+        # Read server output
         try:
             data = await asyncio.wait_for(reader.read(1024), timeout=0.1)
             if not data:
                 break
 
+            # Filter out content between curly braces
             filtered = re.sub(r'\{.*?\}', '', data, flags=re.DOTALL)
 
             if json_mode:
@@ -200,7 +190,7 @@ async def main():
                         print(f"{Fore.MAGENTA}[Enemies detected in room! Auto-attacking...]{Style.RESET_ALL}")
                         attack_stop_event.clear()
                         attack_task = asyncio.create_task(attack_loop(writer, attack_speed, attack_stop_event))
-                # 3. Monster has died!
+                # 3. Monster or enemy has died!
                 if "Monster has died!" in filtered or "has died!" in filtered:
                     if attack_task and not attack_task.done():
                         print(f"{Fore.MAGENTA}[Enemy defeated! Stopping auto-attack.]{Style.RESET_ALL}")
@@ -230,10 +220,12 @@ async def main():
 
                 ground_drop_amount = find_money_ground_drop(filtered)
                 if ground_drop_amount and not aaf_dont_take_money:
-                    print(
-                        f"\n{Fore.YELLOW}[Auto-picking up ${ground_drop_amount} dropped on the ground!]{Style.RESET_ALL}")
+                    print(f"\n{Fore.YELLOW}[Auto-picking up ${ground_drop_amount} dropped on the ground!]{Style.RESET_ALL}")
                     print(color_send(f"take ${ground_drop_amount}"))
                     writer.write(f"take ${ground_drop_amount}\r\n")
+
+                if filtered.strip():
+                    print(filtered, end='')
 
         except asyncio.TimeoutError:
             continue
