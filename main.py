@@ -98,6 +98,11 @@ async def choose_account(config: Dict[str, Any]) -> Tuple[str, str, Optional[int
         for idx, acc in enumerate(accounts, 1):
             loc = acc.get("last_seen_location", "unknown")
             print(f"  {idx}: {acc['username']} (last seen: {loc})")
+        if info.get("auto-log-user", {'enabled': False}).get("enabled"):
+            idx = info.get("auto-log-user").get("user-index") - 1
+            acc = accounts[idx]
+            return acc['username'], acc['password'], idx
+
         choice = input("Use alternate account? (y/n): ").strip().lower()
         if choice == "y":
             while True:
