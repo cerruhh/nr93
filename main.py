@@ -1,21 +1,85 @@
 import asyncio
 import telnetlib3
 import json
+import bigjson
 import re
-import sys
-from typing import Optional, Tuple, Dict, Any
 from colorama import init, Fore, Style
+from typing import List, Dict, Optional, Tuple, Any
+from collections import deque
 
 init(autoreset=True)
 
 CONFIG_FILE: str = "config.json"
+MAP_EXPORT: str = "storage/mapExport.json"
 
+def color_send(msg: str, is_written:bool = True) -> str:
+    if is_written:
+        return f"{Fore.RED}[nr]{Style.RESET_ALL} {Fore.WHITE}{msg}{Style.RESET_ALL}"
+    else:
+        return f"{Fore.RED}[nr local]{Style.RESET_ALL} {Fore.WHITE}{msg}{Style.RESET_ALL}"
 
-def color_send(msg: str) -> str:
-    return f"{Fore.RED}[nr]{Style.RESET_ALL} {Fore.WHITE}{msg}{Style.RESET_ALL}"
+# ======= ROOMS START ========== #
 
+def load_rooms(map_export_file: str) -> List[Dict]:
+    with open(map_export_file, "rb") as f:
+        data = bigjson.load(f)
+    return data[0]["rooms"]
+
+def find_path(rooms: List[Dict], start_id: int, end_id: int) -> Optional[List[str]]:
+    """
+    Find the shortest path from start_id to end_id using only 'exits'.
+    Returns a list of directions (e.g. ['west', 'south', 'east']) or None if no path found.
+    """
+    # Build a lookup: id -> room dict
+    # rooms = load_rooms(map_export_file=MAP_EXPORT)
+    id_to_room = {room["id"]: room for room in rooms}
+    if start_id not in id_to_room or end_id not in id_to_room:
+        print(len(id_to_room))
+        print(id_to_room)
+        return None
+
+    queue = deque()
+    queue.append((start_id, []))
+    visited = set()
+
+    while queue:
+        current_id, path = queue.popleft()
+        if current_id == end_id:
+            return path
+        if current_id in visited:
+            continue
+        visited.add(current_id)
+        exits = id_to_room[current_id].get("exits", {})
+        for direction, neighbor_id in exits.items():
+            # Defensive: skip if neighbor_id not in map (broken exit)
+            if neighbor_id not in id_to_room:
+                continue
+            if neighbor_id not in visited:
+                queue.append((neighbor_id, path + [direction]))
+    return None
+
+def path_to_commands(path: List[str]) -> List[str]:
+    """Compact consecutive directions: ['west', 'west', 'south', 'east', 'east', 'east'] -> ['west 2', 'south 1', 'east 3']"""
+    if not path:
+        return []
+    commands = []
+    last_dir = path[0]
+    count = 1
+    for d in path[1:]:
+        if d == last_dir:
+            count += 1
+        else:
+            commands.append(f"{last_dir} {count}")
+            last_dir = d
+            count = 1
+    commands.append(f"{last_dir} {count}")
+    return commands
+# ======= ROOMS END ========== #
 
 def parse_aliases(alias_list: list[str]) -> Dict[str, str]:
+    """
+    Parses the aliases in the config.json file
+    """
     aliases: Dict[str, str] = {}
     for entry in alias_list:
         if "|" in entry:
@@ -72,14 +136,13 @@ def normalize_location(name: str) -> str:
     return name.lower().replace(" ", "")
 
 
-def update_account_location(config: Dict[str, Any], username: str, location: str) -> None:
-    for acc in config['info'].get('accounts', []):
-        if acc['username'] == username:
-            acc['last_seen_location'] = normalize_location(location)
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(config, f, indent=2)
-            break
-
+# def update_account_location(config: Dict[str, Any], username: str, location: str) -> None:
+#     for acc in config['info'].get('accounts', []):
+#         if acc['username'] == username:
+#             acc['last_seen_location'] = normalize_location(location)
+#             with open(CONFIG_FILE, "w") as f:
+#                 json.dump(config, f, indent=2)
+#             break
 
 async def read_stdin(queue: asyncio.Queue[str]) -> None:
     loop = asyncio.get_running_loop()
@@ -89,6 +152,10 @@ async def read_stdin(queue: asyncio.Queue[str]) -> None:
 
 
 async def choose_account(config: Dict[str, Any]) -> Tuple[str, str, Optional[int]]:
+    """
+    Log the user in.
+    The choice can be a number and it will be accepted as an account index.
+    """
     info = config['info']
     accounts = info.get('accounts', [])
     print(f"Host: {info['host']}  Port: {info['port']}")
@@ -111,26 +178,42 @@ async def choose_account(config: Dict[str, Any]) -> Tuple[str, str, Optional[int
                     acc = accounts[int(idx) - 1]
                     return acc['username'], acc['password'], int(idx) - 1
                 print("Invalid selection.")
+        elif choice.isdigit() and 1 <= int(choice) <= len(accounts):
+            # You can here just enter an account index instead of pressing y first. It's kinda hidden because I like it.
+            acc = accounts[int(choice) - 1]
+            return acc['username'], acc['password'], int(choice) - 1
+
+    # Just the default user
     return info['username'], info['password'], None
 
 
 async def attack_loop(writer: telnetlib3.TelnetWriter, attack_speed: float, stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
         writer.write("attack\r\n")
+        color_send(msg=f"(atk)")
         await asyncio.sleep(attack_speed)
-
 
 async def main() -> None:
     with open(CONFIG_FILE) as f:
         config: Dict[str, Any] = json.load(f)
+
+
+
     info = config['info']
+
+    # Room nav
+    # start_id = 1
+    # end_id = 160
 
     username, password, acc_index = await choose_account(config)
     aliases: Dict[str, str] = parse_aliases(info.get('aliases', []))
+    aliases_list:List[str] = info["aliases"]
     aaf_dont_take_money: bool = info.get('aaf_dont_take_money', False)
     host: str = info['host']
     port: int = info['port']
     attack_speed: float = float(info.get('attack_speed', 5))
+
+    whisper_party:Optional[str] = ""
 
     reader, writer = await telnetlib3.open_connection(host, port)
     input_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -145,9 +228,7 @@ async def main() -> None:
     last_command: str = ""
     json_mode: bool = False
     json_buffer: str = ""
-    last_room: Optional[str] = None
 
-    enemy_count: int = 0
     attack_task: Optional[asyncio.Task] = None
     attack_stop_event: asyncio.Event = asyncio.Event()
 
@@ -155,6 +236,7 @@ async def main() -> None:
 
     while True:
         try:
+            write_chat = True
             cmd: str = await asyncio.wait_for(input_queue.get(), timeout=0.1)
             if cmd == "!quit":
                 break
@@ -164,11 +246,40 @@ async def main() -> None:
                 last_command = cmd
             if cmd.startswith('!') and cmd[1:] in aliases:
                 cmd = aliases[cmd[1:]]
+            elif cmd == "!":
+                for alias in aliases_list:
+                    split = alias.split(sep="|")
+                    exe = split[1]
+                    al = split[0]
+                    print(f"{al} -> {exe}")
+                    del split
+                    del exe
+                write_chat = False
+
             if cmd == "api":
                 json_mode = True
                 json_buffer = ""
-            print(color_send(cmd))
-            writer.write(cmd + "\r\n")
+
+            if cmd.startswith("!wh"):
+                if whisper_party != "":
+                    split = cmd.split(sep=" ", maxsplit=2)
+                    if len(split) == 2:
+                        cmd = f"whisper {whisper_party} {split[1]}"
+
+            if cmd.startswith("!setwhisper"):
+                write_chat = False
+                old_whisper_party = whisper_party if whisper_party != "" else None
+                split = cmd.split(sep=" ")
+                if len(split) == 2:
+                    whisper_party = split[1]
+                    print(f"[Whisper party {old_whisper_party} -> {whisper_party}]")
+                else:
+                    print("[Invalid split lenght]")
+
+
+            print(color_send(cmd, is_written=write_chat))
+            if write_chat:
+                writer.write(cmd.replace("fuck", "funk") + "\r\n")
         except asyncio.TimeoutError:
             pass
 
@@ -177,7 +288,7 @@ async def main() -> None:
             if not data:
                 break
 
-            filtered: str = re.sub(r'\{.*?\}', '', data, flags=re.DOTALL)
+            filtered: str = re.sub(r'\{.*?}', '', data, flags=re.DOTALL)
 
             if json_mode:
                 json_buffer += filtered
@@ -190,22 +301,15 @@ async def main() -> None:
                     json_mode = False
                     json_buffer = ""
             else:
-                room_detected: Optional[str] = detect_new_room(filtered)
-                if room_detected and room_detected != last_room:
-                    print(f"\n{Fore.CYAN}[Entered: {room_detected}]{Style.RESET_ALL}")
-                    last_room = room_detected
-                    if acc_index is not None:
-                        update_account_location(config, username, room_detected)
+                enemy_count = count_enemies(filtered)
+                if enemy_count > 0:
+                    print(f"{Fore.MAGENTA}[Detected {enemy_count} enemies!]{Style.RESET_ALL}")
 
-                    enemy_count = count_enemies(filtered)
-                    if enemy_count > 0:
-                        print(f"{Fore.MAGENTA}[Detected {enemy_count} enemies!]{Style.RESET_ALL}")
-
-                if "Monster enters the room!" in filtered:
+                if "enters the room!" in filtered:
                     enemy_count += 1
                     print(f"{Fore.MAGENTA}[New enemy detected! Total: {enemy_count}]{Style.RESET_ALL}")
 
-                death_matches = re.findall(r'(\w+ has died!|Monster has died!)', filtered, re.IGNORECASE)
+                death_matches = re.findall(r'(\w+ has died!)', filtered, re.IGNORECASE)
                 if death_matches:
                     enemy_count = max(0, enemy_count - len(death_matches))
                     print(f"{Fore.MAGENTA}[Enemy defeated! Remaining: {enemy_count}]{Style.RESET_ALL}")
