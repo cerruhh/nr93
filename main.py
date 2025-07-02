@@ -193,12 +193,23 @@ async def attack_loop(writer: telnetlib3.TelnetWriter, attack_speed: float, stop
         color_send(msg=f"(atk)")
         await asyncio.sleep(attack_speed)
 
+async def loopatk_loop(writer: telnetlib3.TelnetWriter, attack_speed: float, stop_event: asyncio.Event) -> None:
+    while not stop_event.is_set():
+        writer.write("a\r\n")
+        print("[atk]")
+        await asyncio.sleep(attack_speed)
+
+
+def concat_color(items: list[str]) -> str:
+    # Remove style keywords from message
+    return ' '.join([item for item in items[2:] if item.lower() not in {"blink", "bold", "italic"}])
+
 async def main() -> None:
     with open(CONFIG_FILE) as f:
         config: Dict[str, Any] = json.load(f)
 
-
-
+    loopatk_task: Optional[asyncio.Task] = None
+    loopatk_stop_event: asyncio.Event = asyncio.Event()
     info = config['info']
 
     # Room nav
@@ -240,6 +251,26 @@ async def main() -> None:
             cmd: str = await asyncio.wait_for(input_queue.get(), timeout=0.1)
             if cmd == "!quit":
                 break
+
+            if cmd == "!gotohell":
+                writer.write("fuck" + "\r\n")
+                write_chat = False
+
+            if loopatk_task and not loopatk_task.done() and cmd.strip() != "!loopatk":
+                loopatk_stop_event.set()
+                await loopatk_task
+                loopatk_task = None
+
+            if cmd.strip() == "!loopatk":
+                if loopatk_task and not loopatk_task.done():
+                    print(color_send("Loopatk is already running!", is_written=False))
+                else:
+                    print(color_send("Starting loopatk: sending 'a' every {:.2f} seconds.".format(attack_speed),
+                                     is_written=False))
+                    loopatk_stop_event = asyncio.Event()
+                    loopatk_task = asyncio.create_task(loopatk_loop(writer, attack_speed, loopatk_stop_event))
+                continue  # Don't send !loopatk to the server
+
             if not cmd:
                 cmd = last_command
             elif cmd != "api":
@@ -256,6 +287,7 @@ async def main() -> None:
                     del exe
                 write_chat = False
 
+
             if cmd == "api":
                 json_mode = True
                 json_buffer = ""
@@ -264,7 +296,8 @@ async def main() -> None:
                 if whisper_party != "":
                     split = cmd.split(sep=" ", maxsplit=2)
                     if len(split) == 2:
-                        cmd = f"whisper {whisper_party} {split[1]}"
+                        final_msg = ''.join(split[1:])
+                        cmd = f"whisper {whisper_party} {final_msg}"
 
             if cmd.startswith("!setwhisper"):
                 write_chat = False
@@ -276,9 +309,24 @@ async def main() -> None:
                 else:
                     print("[Invalid split lenght]")
 
+            if cmd.startswith("!color"):
+                split = cmd.split(sep=" ")
+                if len(split) >= 3:
+                    sel_color = split[1]
+                    styles = {item.lower() for item in split[2:]}
+                    ansi_styles = ""
+                    if "blink" in styles:
+                        ansi_styles += "\x1b[5m"
+                    if "bold" in styles:
+                        ansi_styles += "\x1b[1m"
+                    if "italic" in styles:
+                        ansi_styles += "\x1b[3m"
+                    msg = concat_color(items=split)
+                    cmd = f"{ansi_styles}\x1b[38;5;{sel_color}m{msg}"
 
             print(color_send(cmd, is_written=write_chat))
             if write_chat:
+                cmd = re.sub(r"fuck", "funk", cmd, flags=re.IGNORECASE)
                 writer.write(cmd.replace("fuck", "funk") + "\r\n")
         except asyncio.TimeoutError:
             pass
