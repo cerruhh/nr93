@@ -250,6 +250,19 @@ async def main() -> None:
 
     print(f"\n{Fore.GREEN}Connected to {host}:{port} as {username}.{Style.RESET_ALL} Type commands or !quit to exit.")
 
+
+    await asyncio.sleep(0.5)
+    # log autoatk
+    if auto_loop_atk_val:
+        if loopatk_task and not loopatk_task.done():
+            print(color_send("Loopatk is already running!", is_written=False))
+        else:
+            print(color_send("Starting loopatk: sending 'a' every {:.2f} seconds.".format(attack_speed),
+                             is_written=False))
+            loopatk_stop_event = asyncio.Event()
+            loopatk_task = asyncio.create_task(loopatk_loop(writer, attack_speed, loopatk_stop_event))
+
+
     while True:
         try:
             write_chat = True
