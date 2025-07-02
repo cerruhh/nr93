@@ -224,6 +224,11 @@ async def main() -> None:
     port: int = info['port']
     attack_speed: float = float(info.get('attack_speed', 5))
 
+    auto_log_user_info:dict = info.get("auto-log-user", {'enabled': False})
+
+    auto_loop_atk_val = auto_log_user_info.get("instant-autoloopatk", False)
+
+
     whisper_party:Optional[str] = ""
 
     reader, writer = await telnetlib3.open_connection(host, port)
