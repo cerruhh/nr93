@@ -251,9 +251,9 @@ async def main() -> None:
     print(f"\n{Fore.GREEN}Connected to {host}:{port} as {username}.{Style.RESET_ALL} Type commands or !quit to exit.")
 
 
-    await asyncio.sleep(0.5)
     # log autoatk
     if auto_loop_atk_val:
+        await asyncio.sleep(0.5)
         if loopatk_task and not loopatk_task.done():
             print(color_send("Loopatk is already running!", is_written=False))
         else:
@@ -312,9 +312,9 @@ async def main() -> None:
 
             if cmd.startswith("!wh"):
                 if whisper_party != "":
-                    split = cmd.split(sep=" ", maxsplit=2)
-                    if len(split) == 2:
-                        final_msg = ''.join(split[1:])
+                    split = cmd.split(sep=" ")
+                    if len(split) >= 2:
+                        final_msg = ' '.join(split[1:])
                         cmd = f"whisper {whisper_party} {final_msg}"
 
             if cmd.startswith("!setwhisper"):
@@ -341,6 +341,12 @@ async def main() -> None:
                         ansi_styles += "\x1b[3m"
                     msg = concat_color(items=split)
                     cmd = f"{ansi_styles}\x1b[38;5;{sel_color}m{msg}"
+
+
+            if cmd == "!aaf":
+                aaf_dont_take_money = not aaf_dont_take_money
+                print(f"[aaf set to {aaf_dont_take_money}]")
+                write_chat = False
 
             print(color_send(cmd, is_written=write_chat))
             if write_chat:
