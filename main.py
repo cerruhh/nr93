@@ -6,6 +6,10 @@ import re
 from colorama import init, Fore, Style
 from typing import List, Dict, Optional, Tuple, Any
 from collections import deque
+from shoplists import shops
+from difflib import get_close_matches
+
+
 
 init(autoreset=True)
 
@@ -75,6 +79,27 @@ def path_to_commands(path: List[str]) -> List[str]:
     commands.append(f"{last_dir} {count}")
     return commands
 # ======= ROOMS END ========== #
+
+def fuzzy_find_shop(cmd:str, slist:dict[str]) -> str:
+    """
+    Finds the nearest matching shop
+    """
+    matches = get_close_matches(cmd, slist.keys(), n=1, cutoff=0.4)
+    if matches:
+        return slist[matches[0]]
+    else:
+        return "No matching shop found."
+
+def fuzzy_find_shop_keys(cmd:str, slist:list[str]) -> str:
+    """
+    Finds the nearest matching shop
+    """
+    matches = get_close_matches(cmd, slist, n=1, cutoff=0.4)
+    if matches:
+        return matches[0]
+    else:
+        return "No matching shop found."
+
 
 def parse_aliases(alias_list: list[str]) -> Dict[str, str]:
     """
@@ -199,10 +224,14 @@ async def loopatk_loop(writer: telnetlib3.TelnetWriter, attack_speed: float, sto
         print("[atk]")
         await asyncio.sleep(attack_speed)
 
+def concat_normal(items: list[str]) -> str:
+    return ' '.join([item for item in items[1:]])
 
 def concat_color(items: list[str]) -> str:
     # Remove style keywords from message
     return ' '.join([item for item in items[2:] if item.lower() not in {"blink", "bold", "italic"}])
+
+
 
 async def main() -> None:
     with open(CONFIG_FILE) as f:
@@ -219,6 +248,7 @@ async def main() -> None:
     username, password, acc_index = await choose_account(config)
     aliases: Dict[str, str] = parse_aliases(info.get('aliases', []))
     aliases_list:List[str] = info["aliases"]
+    aliases_list_keys:List[str] =[alias.split('|')[0] for alias in aliases_list]
     aaf_dont_take_money: bool = info.get('aaf_dont_take_money', False)
     host: str = info['host']
     port: int = info['port']
@@ -272,6 +302,12 @@ async def main() -> None:
 
             if cmd == "!gotohell":
                 writer.write("fuck" + "\r\n")
+                write_chat = False # Does not actually affect the above writer.write since this variable is checked at the bottom.
+
+            if cmd.startswith("!shop "):
+                search_rq = concat_normal(items=cmd.split(sep=" "))
+                shop_result = fuzzy_find_shop(cmd=search_rq, slist=shops)
+                print(shop_result)
                 write_chat = False
 
             if loopatk_task and not loopatk_task.done() and cmd.strip() != "!loopatk":
@@ -293,8 +329,10 @@ async def main() -> None:
                 cmd = last_command
             elif cmd != "api":
                 last_command = cmd
-            if cmd.startswith('!') and cmd[1:] in aliases:
-                cmd = aliases[cmd[1:]]
+
+            cmd_alias_fuzfind = fuzzy_find_shop_keys(cmd=cmd[1:], slist=aliases_list_keys)
+            if cmd.startswith('!') and cmd_alias_fuzfind in aliases_list_keys:
+                cmd = aliases[cmd_alias_fuzfind]
             elif cmd == "!":
                 for alias in aliases_list:
                     split = alias.split(sep="|")
